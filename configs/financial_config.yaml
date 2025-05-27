@@ -1,0 +1,46 @@
+# Financial news sentiment analysis configuration
+model:
+  name: "ProsusAI/finbert"  # Pre-trained financial BERT
+  num_labels: 3
+  max_length: 512
+  dropout: 0.1
+
+# Training parameters - more conservative for financial domain
+training:
+  batch_size: 8  # Smaller batch for financial data
+  learning_rate: 2e-5  # Lower learning rate
+  num_epochs: 10
+  warmup_steps: 200
+  weight_decay: 0.01
+  save_steps: 500
+  eval_steps: 250
+  logging_steps: 50
+
+# Data parameters
+data:
+  train_size: 0.8
+  val_size: 0.1
+  test_size: 0.1
+  text_column: "text"
+  label_column: "sentiment"
+  domain: "financial"
+  
+# Financial-specific preprocessing
+preprocessing:
+  clean_text: true
+  preserve_financial_terms: true
+  handle_numbers: true  # Important for financial texts
+  max_chunk_length: 300  # Shorter chunks for financial news
+  chunk_overlap: 30
+
+# Domain-specific evaluation
+evaluation:
+  metrics: ["accuracy", "f1", "precision", "recall", "financial_accuracy"]
+  average: "weighted"
+  domain_specific: true
+
+# Class weights for financial sentiment (often imbalanced)
+class_weights:
+  negative: 1.2
+  neutral: 0.8
+  positive: 1.0

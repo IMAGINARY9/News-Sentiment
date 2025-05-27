@@ -1,0 +1,52 @@
+# Base configuration for news sentiment analysis
+model:
+  name: "bert-base-uncased"
+  num_labels: 3  # positive, negative, neutral
+  max_length: 512
+  dropout: 0.1
+
+# Training parameters
+training:
+  batch_size: 16
+  learning_rate: 5e-5
+  num_epochs: 5
+  warmup_steps: 500
+  weight_decay: 0.01
+  save_steps: 1000
+  eval_steps: 500
+  logging_steps: 100
+
+# Data parameters
+data:
+  train_size: 0.8
+  val_size: 0.1
+  test_size: 0.1
+  text_column: "text"
+  label_column: "sentiment"
+  max_articles: null  # null for all articles
+  chunk_long_articles: true
+
+# Preprocessing
+preprocessing:
+  clean_text: true
+  handle_long_docs: true
+  max_chunk_length: 400
+  chunk_overlap: 50
+  remove_stopwords: false  # Keep for sentiment
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "f1", "precision", "recall"]
+  average: "weighted"
+  
+# Paths
+paths:
+  data_dir: "./data"
+  model_dir: "./models"
+  log_dir: "./logs"
+  output_dir: "./outputs"
+
+# Hardware
+device: "auto"  # auto, cpu, cuda
+mixed_precision: true
+gradient_checkpointing: false
