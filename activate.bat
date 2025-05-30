@@ -1,16 +1,11 @@
 @echo off
-REM News Sentiment Analysis - Activation Script
-REM This script activates the virtual environment
-
-if not exist venv (
-    echo Error: Virtual environment not found. Run setup.bat first.
-    pause
-    exit /b 1
-)
-
 echo Activating News Sentiment Analysis environment...
-call venv\Scripts\activate.bat
-
-echo Environment activated successfully!
-echo Current project: News Sentiment Analysis
-echo To deactivate, type: deactivate
+call %~dp0venv\Scripts\activate.bat
+echo.
+echo Environment ready! You can now run:
+echo   - python scripts\prepare_data.py       (Prepare your data)
+echo   - python scripts\train.py              (Train a model)
+echo   - python scripts\evaluate.py           (Evaluate a model)
+echo   - jupyter notebook                     (Start Jupyter notebook server)
+echo.
+set PYTHONPATH=%~dp0;%PYTHONPATH%

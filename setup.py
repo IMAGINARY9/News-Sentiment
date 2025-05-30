@@ -9,9 +9,15 @@ import sys
 import os
 from pathlib import Path
 
-def run_command(command, description):
-    """Run a command and handle errors."""
+def run_command(command, description, use_venv=True):
+    """Run a command and handle errors, optionally in venv."""
     print(f"\n{description}...")
+    venv_python = os.path.join("venv", "Scripts", "python.exe")
+    if use_venv and os.path.exists(venv_python):
+        if command.startswith("python "):
+            command = command.replace("python", f'"{venv_python}"', 1)
+        elif command.startswith("pip "):
+            command = command.replace("pip", f'"{venv_python}" -m pip', 1)
     try:
         result = subprocess.run(command, check=True, shell=True, capture_output=True, text=True)
         print(f"✓ {description} completed successfully")
@@ -21,24 +27,36 @@ def run_command(command, description):
         print(f"Error output: {e.stderr}")
         return False
 
+def ensure_venv():
+    """Ensure the virtual environment exists, create if not."""
+    venv_path = Path("venv")
+    if not venv_path.exists():
+        print("Creating virtual environment...")
+        result = subprocess.run(f"python -m venv venv", shell=True)
+        if result.returncode != 0:
+            print("✗ Failed to create virtual environment")
+            sys.exit(1)
+        print("✓ Virtual environment created.")
+    else:
+        print("✓ Virtual environment already exists.")
+
 def install_dependencies():
-    """Install Python dependencies."""
-    return run_command(
-        f"{sys.executable} -m pip install -r requirements.txt",
-        "Installing dependencies"
-    )
+    """Install Python dependencies in venv."""
+    venv_python = os.path.join("venv", "Scripts", "python.exe")
+    # Upgrade pip, setuptools, wheel first
+    run_command(f'"{venv_python}" -m pip install --upgrade pip setuptools wheel', "Upgrading pip and build tools", use_venv=False)
+    return run_command(f'"{venv_python}" -m pip install -r requirements.txt', "Installing dependencies", use_venv=False)
 
 def download_models():
-    """Download pre-trained models."""
+    """Download pre-trained models using venv python."""
+    venv_python = os.path.join("venv", "Scripts", "python.exe")
     commands = [
-        "python -c \"from transformers import AutoModel, AutoTokenizer; AutoModel.from_pretrained('bert-base-uncased'); AutoTokenizer.from_pretrained('bert-base-uncased')\"",
-        "python -c \"from transformers import AutoModel, AutoTokenizer; AutoModel.from_pretrained('ProsusAI/finbert'); AutoTokenizer.from_pretrained('ProsusAI/finbert')\"",
+        f'"{venv_python}" -c "from transformers import AutoModel, AutoTokenizer; AutoModel.from_pretrained(\'bert-base-uncased\'); AutoTokenizer.from_pretrained(\'bert-base-uncased\')"',
+        f'"{venv_python}" -c "from transformers import AutoModel, AutoTokenizer; AutoModel.from_pretrained(\'ProsusAI/finbert\'); AutoTokenizer.from_pretrained(\'ProsusAI/finbert\')"',
     ]
-    
     success = True
     for cmd in commands:
-        success &= run_command(cmd, "Downloading pre-trained models")
-    
+        success &= run_command(cmd, "Downloading pre-trained models", use_venv=False)
     return success
 
 def setup_directories():
@@ -55,17 +73,16 @@ def setup_directories():
     return True
 
 def download_nltk_data():
-    """Download required NLTK data."""
+    """Download required NLTK data using venv python."""
+    venv_python = os.path.join("venv", "Scripts", "python.exe")
     commands = [
-        "python -c \"import nltk; nltk.download('punkt', quiet=True)\"",
-        "python -c \"import nltk; nltk.download('stopwords', quiet=True)\"",
-        "python -c \"import nltk; nltk.download('wordnet', quiet=True)\"",
+        f'"{venv_python}" -c "import nltk; nltk.download(\'punkt\', quiet=True)"',
+        f'"{venv_python}" -c "import nltk; nltk.download(\'stopwords\', quiet=True)"',
+        f'"{venv_python}" -c "import nltk; nltk.download(\'wordnet\', quiet=True)"',
     ]
-    
     success = True
     for cmd in commands:
-        success &= run_command(cmd, "Downloading NLTK data")
-    
+        success &= run_command(cmd, "Downloading NLTK data", use_venv=False)
     return success
 
 def main():
@@ -78,6 +95,9 @@ def main():
         sys.exit(1)
     
     print(f"✓ Using Python {sys.version}")
+    
+    # Ensure virtual environment is set up
+    ensure_venv()
     
     # Setup steps
     steps = [
