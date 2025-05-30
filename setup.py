@@ -32,7 +32,7 @@ def ensure_venv():
     venv_path = Path("venv")
     if not venv_path.exists():
         print("Creating virtual environment...")
-        result = subprocess.run(f"python -m venv venv", shell=True)
+        result = subprocess.run("python -m venv venv", shell=True)
         if result.returncode != 0:
             print("✗ Failed to create virtual environment")
             sys.exit(1)
@@ -85,6 +85,12 @@ def download_nltk_data():
         success &= run_command(cmd, "Downloading NLTK data", use_venv=False)
     return success
 
+def download_spacy_model():
+    """Download the spaCy model 'en_core_web_sm' using venv python."""
+    venv_python = os.path.join("venv", "Scripts", "python.exe")
+    command = f'"{venv_python}" -m spacy download en_core_web_sm'
+    return run_command(command, "Downloading spaCy model 'en_core_web_sm'", use_venv=False)
+
 def main():
     print("Setting up News Sentiment Analysis Project")
     print("=" * 50)
@@ -104,6 +110,7 @@ def main():
         ("Setting up directories", setup_directories),
         ("Installing dependencies", install_dependencies),
         ("Downloading NLTK data", download_nltk_data),
+        ("Downloading spaCy model 'en_core_web_sm'", download_spacy_model),
         ("Downloading pre-trained models", download_models),
     ]
     

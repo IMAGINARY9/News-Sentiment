@@ -20,12 +20,38 @@ def prepare_financial_news_data():
     
     if not data_dir.exists():
         print("Financial news data not found. Please ensure data is in ./data/financial_news/")
-        return
-    
-    # Process financial news files
+        return    
+    # Process financial news files (only original data files, not processed ones)
     for file_path in data_dir.glob("*.csv"):
+        # Skip already processed files
+        if file_path.name.startswith("processed_"):
+            continue
         print(f"Processing {file_path}")
-        df = pd.read_csv(file_path)
+          # Try different encodings
+        encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
+        df = None
+        
+        for encoding in encodings:
+            try:
+                # Read CSV without headers since the file doesn't have proper column names
+                df = pd.read_csv(file_path, encoding=encoding, header=None, names=['sentiment', 'text'])
+                print(f"Successfully read {file_path.name} with {encoding} encoding")
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        if df is None:
+            print(f"Could not read {file_path.name} with any encoding, skipping...")
+            continue
+            
+        # Display the structure for verification
+        print(f"  Data shape: {df.shape}")
+        print(f"  Columns: {list(df.columns)}")
+        print(f"  Sample sentiment values: {df['sentiment'].value_counts().head()}")
+        print(f"  First text sample: {df['text'].iloc[0][:100]}...")
+        
+        # Clean any whitespace in sentiment labels
+        df['sentiment'] = df['sentiment'].str.strip()
         
         # Initialize preprocessor
         preprocessor = NewsPreprocessor(tokenizer_name="ProsusAI/finbert")
