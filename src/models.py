@@ -264,6 +264,34 @@ class LongDocumentModel(NewsTransformerModel):
         return result
 
 
+class LSTMSentimentModel(nn.Module):
+    """
+    Bidirectional LSTM model for tweet sentiment classification (PyTorch version).
+    """
+    def __init__(self, vocab_size, embedding_dim=32, hidden_dim=32, output_dim=3, max_len=50, dropout=0.4):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        self.conv1d = nn.Conv1d(embedding_dim, 32, kernel_size=3, padding=1)
+        self.maxpool = nn.MaxPool1d(kernel_size=2)
+        self.lstm = nn.LSTM(32, hidden_dim, batch_first=True, bidirectional=True)
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(hidden_dim * 2, output_dim)
+        self.max_len = max_len
+
+    def forward(self, x):
+        # x: [batch_size, seq_len]
+        x = self.embedding(x)  # [batch_size, seq_len, embedding_dim]
+        x = x.transpose(1, 2)  # [batch_size, embedding_dim, seq_len]
+        x = self.conv1d(x)     # [batch_size, 32, seq_len]
+        x = self.maxpool(x)    # [batch_size, 32, seq_len//2]
+        x = x.transpose(1, 2)  # [batch_size, seq_len//2, 32]
+        output, (h_n, c_n) = self.lstm(x)  # output: [batch_size, seq_len//2, hidden_dim*2]
+        out = output[:, -1, :]  # Take last output
+        out = self.dropout(out)
+        logits = self.fc(out)
+        return logits
+
+
 def create_model(config: Dict) -> NewsTransformerModel:
     """
     Factory function to create models based on configuration.

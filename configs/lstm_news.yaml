@@ -1,0 +1,24 @@
+model:
+  type: lstm
+  name: lstm_news
+  vocab_size: 5000
+  embedding_dim: 32
+  hidden_dim: 32
+  num_labels: 3
+  max_len: 50
+  dropout: 0.4
+
+training:
+  batch_size: 64
+  epochs: 10
+  learning_rate: 0.001
+  optimizer: adam
+
+paths:
+  data_dir: data/financial_news
+  output_dir: models/
+  log_dir: logs/
+
+data:
+  text_column: text
+  label_column: sentiment

@@ -42,6 +42,7 @@ evaluation:
 # Paths
 paths:
   data_dir: "./data"
+  dataset_name: "financial_news"
   model_dir: "./models"
   log_dir: "./logs"
   output_dir: "./outputs"

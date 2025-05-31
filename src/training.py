@@ -8,7 +8,8 @@ different training strategies and domain adaptation.
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
-from transformers import AdamW, get_linear_schedule_with_warmup
+from torch.optim import AdamW
+from transformers import get_linear_schedule_with_warmup
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
 from typing import Dict, List, Optional, Tuple
@@ -17,6 +18,8 @@ from tqdm import tqdm
 import logging
 from pathlib import Path
 import json
+import time
+import datetime
 
 from models import NewsTransformerModel, NewsDataset
 
@@ -39,14 +42,13 @@ class NewsTrainer:
         self.config = config
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
-        
         # Training parameters
         self.epochs = config.get('epochs', 3)
         self.batch_size = config.get('batch_size', 16)
-        self.learning_rate = config.get('learning_rate', 2e-5)
-        self.weight_decay = config.get('weight_decay', 0.01)
+        self.learning_rate = float(config.get('learning_rate', 2e-5))
+        self.weight_decay = float(config.get('weight_decay', 0.01))
         self.warmup_steps = config.get('warmup_steps', 0)
-        self.max_grad_norm = config.get('max_grad_norm', 1.0)
+        self.max_grad_norm = float(config.get('max_grad_norm', 1.0))
         
         # Logging
         self.use_wandb = config.get('use_wandb', False)
@@ -56,12 +58,16 @@ class NewsTrainer:
         # Initialize optimizer and scheduler (will be set during training)
         self.optimizer = None
         self.scheduler = None
-        
         self.logger = logging.getLogger(__name__)
-    
+        
+        # Time tracking
+        self.training_start_time = None
+        self.epoch_times = []
+        self.batch_times = []
+            
     def create_data_loaders(self, train_texts: List[str], train_labels: List[int],
-                          val_texts: List[str], val_labels: List[int],
-                          tokenizer) -> Tuple[DataLoader, DataLoader]:
+                            val_texts: List[str], val_labels: List[int],
+                            tokenizer) -> Tuple[DataLoader, DataLoader]:
         """
         Create data loaders for training and validation.
         
@@ -121,16 +127,22 @@ class NewsTrainer:
                 self.optimizer,
                 T_max=total_steps
             )
-    
-    def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
+    def train_epoch(self, train_loader: DataLoader, epoch_num: int) -> Dict[str, float]:
         """Train for one epoch."""
+        epoch_start_time = time.time()
+        self.logger.info(f"Starting epoch {epoch_num} at {datetime.datetime.now().strftime('%H:%M:%S')}")
+        
         self.model.train()
         total_loss = 0.0
         num_batches = len(train_loader)
+        batch_times = []
+        losses = []
         
-        progress_bar = tqdm(train_loader, desc="Training")
+        progress_bar = tqdm(train_loader, desc=f"Training Epoch {epoch_num}")
         
-        for batch in progress_bar:
+        for batch_idx, batch in enumerate(progress_bar):
+            batch_start_time = time.time()
+            
             # Move batch to device
             input_ids = batch['input_ids'].to(self.device)
             attention_mask = batch['attention_mask'].to(self.device)
@@ -140,54 +152,113 @@ class NewsTrainer:
             self.optimizer.zero_grad()
             
             # Forward pass
+            forward_start = time.time()
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels
             )
+            forward_time = time.time() - forward_start
             
             loss = outputs['loss']
             total_loss += loss.item()
+            losses.append(loss.item())
             
             # Backward pass
+            backward_start = time.time()
             loss.backward()
-            
-            # Clip gradients
+            backward_time = time.time() - backward_start
+              # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
             
             # Update weights
+            update_start = time.time()
             self.optimizer.step()
             if self.scheduler:
                 self.scheduler.step()
+            update_time = time.time() - update_start
             
-            # Update progress bar
-            progress_bar.set_postfix({'loss': loss.item()})
+            batch_time = time.time() - batch_start_time
+            batch_times.append(batch_time)
+            
+            # Current learning rate
+            current_lr = self.optimizer.param_groups[0]['lr']
+            
+            # Update progress bar with detailed info
+            progress_bar.set_postfix({
+                'loss': f'{loss.item():.4f}',
+                'avg_loss': f'{total_loss/(batch_idx+1):.4f}',
+                'lr': f'{current_lr:.2e}',
+                'batch_time': f'{batch_time:.2f}s',
+                'forward': f'{forward_time:.2f}s',
+                'backward': f'{backward_time:.2f}s'
+            })
+            
+            # Detailed logging every 50 batches
+            if batch_idx % 50 == 0 and batch_idx > 0:
+                avg_batch_time = np.mean(batch_times[-50:])
+                avg_loss_recent = np.mean(losses[-50:])
+                remaining_batches = num_batches - batch_idx
+                eta_seconds = remaining_batches * avg_batch_time
+                eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
+                
+                self.logger.info(f"Batch {batch_idx}/{num_batches} | "
+                               f"Loss: {loss.item():.4f} | "
+                               f"Avg Loss (last 50): {avg_loss_recent:.4f} | "
+                               f"Batch Time: {batch_time:.2f}s | "
+                               f"Avg Batch Time: {avg_batch_time:.2f}s | "
+                               f"ETA: {eta_str} | "
+                               f"LR: {current_lr:.2e}")
             
             # Log to wandb if enabled
             if self.use_wandb:
                 wandb.log({
                     'train_loss_step': loss.item(),
-                    'learning_rate': self.optimizer.param_groups[0]['lr']
+                    'learning_rate': current_lr,
+                    'batch_time': batch_time,
+                    'forward_time': forward_time,
+                    'backward_time': backward_time
                 })
         
+        epoch_time = time.time() - epoch_start_time
+        self.epoch_times.append(epoch_time)
         avg_loss = total_loss / num_batches
-        return {'train_loss': avg_loss}
+        avg_batch_time = np.mean(batch_times)
+        
+        self.logger.info(f"Epoch {epoch_num} completed in {epoch_time:.2f}s | "
+                        f"Avg batch time: {avg_batch_time:.2f}s | "
+                        f"Final avg loss: {avg_loss:.4f}")
+        
+        return {
+            'train_loss': avg_loss,
+            'epoch_time': epoch_time,
+            'avg_batch_time': avg_batch_time,
+            'total_batches': num_batches
+        }
     
-    def evaluate(self, val_loader: DataLoader) -> Dict[str, float]:
+    def evaluate(self, val_loader: DataLoader, epoch_num: int = None) -> Dict[str, float]:
         """Evaluate the model."""
+        eval_start_time = time.time()
+        if epoch_num is not None:
+            self.logger.info(f"Starting evaluation for epoch {epoch_num} at {datetime.datetime.now().strftime('%H:%M:%S')}")
+        else:
+            self.logger.info(f"Starting evaluation at {datetime.datetime.now().strftime('%H:%M:%S')}")
+        
         self.model.eval()
         total_loss = 0.0
         all_predictions = []
         all_labels = []
+        batch_times = []
         
         with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Evaluating"):
+            for batch_idx, batch in enumerate(tqdm(val_loader, desc="Evaluating")):
+                batch_start_time = time.time()
+                
                 # Move batch to device
                 input_ids = batch['input_ids'].to(self.device)
                 attention_mask = batch['attention_mask'].to(self.device)
                 labels = batch['labels'].to(self.device)
-                
-                # Forward pass
+                  # Forward pass
                 outputs = self.model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -203,6 +274,12 @@ class NewsTrainer:
                 predictions = torch.argmax(logits, dim=-1)
                 all_predictions.extend(predictions.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())
+                
+                batch_time = time.time() - batch_start_time
+                batch_times.append(batch_time)
+        
+        eval_time = time.time() - eval_start_time
+        avg_batch_time = np.mean(batch_times)
         
         # Calculate metrics
         avg_loss = total_loss / len(val_loader)
@@ -211,14 +288,21 @@ class NewsTrainer:
             all_labels, all_predictions, average='weighted'
         )
         
+        self.logger.info(f"Evaluation completed in {eval_time:.2f}s | "
+                        f"Avg batch time: {avg_batch_time:.2f}s | "
+                        f"Accuracy: {accuracy:.4f} | "
+                        f"F1: {f1:.4f}")
+        
         return {
             'val_loss': avg_loss,
             'val_accuracy': accuracy,
             'val_precision': precision,
             'val_recall': recall,
-            'val_f1': f1
+            'val_f1': f1,
+            'eval_time': eval_time,
+            'eval_avg_batch_time': avg_batch_time
         }
-    
+
     def train(self, train_texts: List[str], train_labels: List[int],
               val_texts: List[str], val_labels: List[int],
               tokenizer) -> Dict[str, List[float]]:
@@ -235,48 +319,94 @@ class NewsTrainer:
         Returns:
             Training history
         """
-        self.logger.info(f"Starting training on {self.device}")
-        self.logger.info(f"Training samples: {len(train_texts)}")
-        self.logger.info(f"Validation samples: {len(val_texts)}")
+        self.training_start_time = time.time()
+        training_start_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        self.logger.info("="*80)
+        self.logger.info(f"TRAINING STARTED AT: {training_start_str}")
+        self.logger.info("="*80)
+        self.logger.info(f"Device: {self.device}")
+        self.logger.info(f"Training samples: {len(train_texts):,}")
+        self.logger.info(f"Validation samples: {len(val_texts):,}")
+        self.logger.info(f"Epochs: {self.epochs}")
+        self.logger.info(f"Batch size: {self.batch_size}")
+        self.logger.info(f"Learning rate: {self.learning_rate}")
+        self.logger.info(f"Weight decay: {self.weight_decay}")
+        self.logger.info(f"Warmup steps: {self.warmup_steps}")
         
         # Create data loaders
+        data_loader_start = time.time()
+        self.logger.info("Creating data loaders...")
         train_loader, val_loader = self.create_data_loaders(
             train_texts, train_labels, val_texts, val_labels, tokenizer
         )
+        data_loader_time = time.time() - data_loader_start
+        self.logger.info(f"Data loaders created in {data_loader_time:.2f}s")
+        self.logger.info(f"Training batches: {len(train_loader)}")
+        self.logger.info(f"Validation batches: {len(val_loader)}")
         
         # Setup optimizer and scheduler
+        optimizer_start = time.time()
+        self.logger.info("Setting up optimizer and scheduler...")
         self.setup_optimizer_and_scheduler(train_loader)
-        
-        # Training history
+        optimizer_time = time.time() - optimizer_start
+        self.logger.info(f"Optimizer setup completed in {optimizer_time:.2f}s")
+          # Training history
         history = {
             'train_loss': [],
             'val_loss': [],
             'val_accuracy': [],
-            'val_f1': []
+            'val_f1': [],
+            'epoch_times': [],
+            'train_times': [],
+            'eval_times': []
         }
         
         best_f1 = 0.0
+        total_training_time = 0
         
         for epoch in range(self.epochs):
-            self.logger.info(f"Epoch {epoch + 1}/{self.epochs}")
+            epoch_start_time = time.time()
+            self.logger.info("="*60)
+            self.logger.info(f"EPOCH {epoch + 1}/{self.epochs}")
+            self.logger.info("="*60)
             
             # Train
-            train_metrics = self.train_epoch(train_loader)
+            train_metrics = self.train_epoch(train_loader, epoch + 1)
             
             # Evaluate
-            val_metrics = self.evaluate(val_loader)
+            val_metrics = self.evaluate(val_loader, epoch + 1)
+            
+            epoch_time = time.time() - epoch_start_time
+            total_training_time += epoch_time
             
             # Update history
             history['train_loss'].append(train_metrics['train_loss'])
             history['val_loss'].append(val_metrics['val_loss'])
             history['val_accuracy'].append(val_metrics['val_accuracy'])
             history['val_f1'].append(val_metrics['val_f1'])
+            history['epoch_times'].append(epoch_time)
+            history['train_times'].append(train_metrics.get('epoch_time', 0))
+            history['eval_times'].append(val_metrics.get('eval_time', 0))
             
-            # Log metrics
-            self.logger.info(f"Train Loss: {train_metrics['train_loss']:.4f}")
-            self.logger.info(f"Val Loss: {val_metrics['val_loss']:.4f}")
-            self.logger.info(f"Val Accuracy: {val_metrics['val_accuracy']:.4f}")
-            self.logger.info(f"Val F1: {val_metrics['val_f1']:.4f}")
+            # Calculate ETA
+            avg_epoch_time = total_training_time / (epoch + 1)
+            remaining_epochs = self.epochs - (epoch + 1)
+            eta_seconds = remaining_epochs * avg_epoch_time
+            eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
+            
+            # Log comprehensive metrics
+            self.logger.info("EPOCH SUMMARY:")
+            self.logger.info(f"  Training Loss: {train_metrics['train_loss']:.4f}")
+            self.logger.info(f"  Validation Loss: {val_metrics['val_loss']:.4f}")
+            self.logger.info(f"  Validation Accuracy: {val_metrics['val_accuracy']:.4f}")
+            self.logger.info(f"  Validation F1: {val_metrics['val_f1']:.4f}")
+            self.logger.info(f"  Epoch Time: {epoch_time:.2f}s")
+            self.logger.info(f"  Training Time: {train_metrics.get('epoch_time', 0):.2f}s")
+            self.logger.info(f"  Evaluation Time: {val_metrics.get('eval_time', 0):.2f}s")
+            self.logger.info(f"  Avg Epoch Time: {avg_epoch_time:.2f}s")
+            if remaining_epochs > 0:
+                self.logger.info(f"  ETA: {eta_str}")
             
             # Log to wandb
             if self.use_wandb:
@@ -285,19 +415,38 @@ class NewsTrainer:
                     **train_metrics,
                     **val_metrics
                 })
-            
-            # Save best model
+              # Save best model
             if val_metrics['val_f1'] > best_f1:
                 best_f1 = val_metrics['val_f1']
                 self.save_model(f'best_model_epoch_{epoch + 1}')
-                self.logger.info(f"New best model saved with F1: {best_f1:.4f}")
+                self.logger.info(f"✅ NEW BEST MODEL SAVED with F1: {best_f1:.4f}")
+        
+        # Calculate total training time
+        total_training_time = time.time() - self.training_start_time
         
         # Save final model
         self.save_model('final_model')
         
-        # Save training history
+        # Save training history with timing info
+        history['total_training_time'] = total_training_time
+        history['avg_epoch_time'] = np.mean(self.epoch_times)
+        history['best_f1'] = best_f1
+        
         with open(self.save_dir / 'training_history.json', 'w') as f:
-            json.dump(history, f, indent=2)
+            json.dump(history, f, indent=2, default=str)
+        
+        # Final summary
+        training_end_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.logger.info("="*80)
+        self.logger.info("TRAINING COMPLETED!")
+        self.logger.info("="*80)
+        self.logger.info(f"Training finished at: {training_end_str}")
+        self.logger.info(f"Total training time: {str(datetime.timedelta(seconds=int(total_training_time)))}")
+        self.logger.info(f"Average epoch time: {np.mean(self.epoch_times):.2f}s")
+        self.logger.info(f"Best F1 score: {best_f1:.4f}")
+        self.logger.info(f"Final validation accuracy: {history['val_accuracy'][-1]:.4f}")
+        self.logger.info(f"Final validation F1: {history['val_f1'][-1]:.4f}")
+        self.logger.info("="*80)
         
         return history
     

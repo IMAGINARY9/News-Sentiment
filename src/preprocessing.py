@@ -14,6 +14,27 @@ from nltk.corpus import stopwords
 from textblob import TextBlob
 import demoji
 import spacy
+from nltk.stem.porter import PorterStemmer
+from collections import Counter
+import torch
+
+def detect_text_and_label_columns(df, text_candidates=None, label_candidates=None):
+    """Utility to detect text and label columns in a DataFrame."""
+    if text_candidates is None:
+        text_candidates = ['text', 'content', 'article', 'news', 'sentence', 'clean_text']
+    if label_candidates is None:
+        label_candidates = ['sentiment', 'label', 'target', 'class', 'category']
+    text_col = None
+    label_col = None
+    for col in text_candidates:
+        if col in df.columns:
+            text_col = col
+            break
+    for col in label_candidates:
+        if col in df.columns:
+            label_col = col
+            break
+    return text_col, label_col
 
 class NewsPreprocessor:
     """Preprocessor for news articles with sentiment analysis focus."""
@@ -266,29 +287,26 @@ class NewsPreprocessor:
                 result['filtered_short_chunks'] = 1
         
         return result    
-    def preprocess_dataset(self, df: pd.DataFrame, text_column: str = 'text', 
+    def preprocess_dataset(self, df: pd.DataFrame, text_column: str = None, 
                           sentiment_column: Optional[str] = None) -> pd.DataFrame:
         """
         Preprocess an entire dataset with filtering for short chunks.
-        
-        Args:
-            df: DataFrame with news articles
-            text_column: Name of the text column
-            sentiment_column: Name of the sentiment column (if exists)
-            
-        Returns:
-            Preprocessed DataFrame with only valid chunks
+        Auto-detects text/label columns if not provided.
         """
+        # Auto-detect columns if not provided
+        if text_column is None or (sentiment_column is None and sentiment_column != False):
+            detected_text, detected_label = detect_text_and_label_columns(df)
+            text_column = text_column or detected_text
+            if sentiment_column is None:
+                sentiment_column = detected_label
+        if not text_column:
+            raise ValueError("Could not detect text column in DataFrame.")
         processed_data = []
         total_filtered = 0
-        
         for idx, row in df.iterrows():
             article_text = row[text_column]
             processed = self.preprocess_article(article_text)
-            
             total_filtered += processed.get('filtered_short_chunks', 0)
-            
-            # Create entries for each valid chunk
             for chunk_idx, chunk in enumerate(processed['chunks']):
                 entry = {
                     'original_id': idx,
@@ -299,26 +317,19 @@ class NewsPreprocessor:
                     'num_tokens': processed['num_tokens'],
                     'cleaning_metrics': processed['cleaning_metrics']
                 }
-                
                 # Add sentiment if available
                 if sentiment_column and sentiment_column in row:
                     entry['sentiment'] = row[sentiment_column]
-                
                 # Add other columns
                 for col in df.columns:
                     if col not in [text_column, sentiment_column]:
                         entry[col] = row[col]
-                
                 processed_data.append(entry)
-        
         result_df = pd.DataFrame(processed_data)
-        
-        # Add metadata about filtering
         if hasattr(result_df, 'attrs'):
             result_df.attrs['total_filtered_chunks'] = total_filtered
             result_df.attrs['original_count'] = len(df)
             result_df.attrs['final_count'] = len(result_df)
-        
         return result_df
     
     def tokenize_for_model(self, texts: List[str]) -> Dict:
@@ -338,3 +349,52 @@ class NewsPreprocessor:
             max_length=self.max_length,
             return_tensors="pt"
         )
+
+class TweetPreprocessor:
+    """Preprocessor for tweets for LSTM sentiment analysis."""
+    def __init__(self, remove_stopwords=True):
+        self.remove_stopwords = remove_stopwords
+        nltk.download('stopwords', quiet=True)
+        self.stop_words = set(stopwords.words('english')) if remove_stopwords else set()
+        self.stemmer = PorterStemmer()
+
+    def tweet_to_words(self, tweet):
+        # Convert to lowercase
+        text = tweet.lower()
+        # Remove non-letters
+        text = re.sub(r"[^a-zA-Z0-9]", " ", text)
+        # Tokenize
+        words = text.split()
+        # Remove stopwords
+        if self.remove_stopwords:
+            words = [w for w in words if w not in self.stop_words]
+        # Apply stemming
+        words = [self.stemmer.stem(w) for w in words]
+        return words
+
+    def preprocess_tweets(self, tweets):
+        return [self.tweet_to_words(t) for t in tweets]
+
+class VocabBuilder:
+    def __init__(self, max_vocab_size=5000):
+        self.max_vocab_size = max_vocab_size
+        self.word2idx = {'<PAD>': 0, '<UNK>': 1}
+        self.idx2word = ['<PAD>', '<UNK>']
+
+    def build_vocab(self, tokenized_texts):
+        counter = Counter(w for tokens in tokenized_texts for w in tokens)
+        most_common = counter.most_common(self.max_vocab_size - 2)
+        for word, _ in most_common:
+            self.word2idx[word] = len(self.word2idx)
+            self.idx2word.append(word)
+
+    def encode(self, tokenized_texts, max_len=50):
+        encoded = []
+        for tokens in tokenized_texts:
+            idxs = [self.word2idx.get(w, 1) for w in tokens]
+            if len(idxs) < max_len:
+                idxs += [0] * (max_len - len(idxs))
+            else:
+                idxs = idxs[:max_len]
+            encoded.append(idxs)
+        return torch.tensor(encoded, dtype=torch.long)

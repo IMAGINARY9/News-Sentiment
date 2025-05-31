@@ -172,3 +172,18 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Ignore trained models
+models/
+models/*
+reports/
+reports/*
+outputs/
+outputs/*
+evaluations/
+evaluations/*
+
+# Ignore prepared data
+# (raw, processed, external, interim, etc.)
+data/
+data/*

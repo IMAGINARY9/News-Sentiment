@@ -9,14 +9,16 @@ __version__ = "0.1.0"
 __author__ = "Sentiment Analysis Team"
 
 from .preprocessing import NewsPreprocessor
-from .models import NewsTransformerModel, HierarchicalModel
+from .models import NewsTransformerModel, LSTMSentimentModel, FinancialNewsModel, LongDocumentModel
 from .training import NewsTrainer
 from .evaluation import NewsEvaluator
 
 __all__ = [
     "NewsPreprocessor",
     "NewsTransformerModel", 
-    "HierarchicalModel",
+    "LSTMSentimentModel",
+    "FinancialNewsModel",
+    "LongDocumentModel",
     "NewsTrainer",
     "NewsEvaluator"
 ]
