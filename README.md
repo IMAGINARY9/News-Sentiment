@@ -110,7 +110,31 @@ python scripts/predict.py --model-path models/best_model.pt --config configs/bas
 - The input file should contain one document per line.
 - The script prints predictions and confidence for each input.
 
-### Data Preparation
+## Visualization of Prediction Explanations
+
+You can now generate and save visual explanations of model predictions (token importances, LIME plots, etc) for both transformer and LSTM models.
+
+- All visualization logic is implemented in `src/visualization.py`.
+- Plots are saved to the `visualizations/` directory.
+- Requires the `lime` library for transformer explanations (install with `pip install lime`).
+
+### Example Usage
+
+**Single text prediction with visualization:**
+```powershell
+python scripts/predict.py --model-path models/best_model.pt --config configs/base_config.yaml --text "Your news text here" --visualize
+```
+
+**Batch prediction from file with visualization:**
+```powershell
+python scripts/predict.py --model-path models/best_model.pt --config configs/base_config.yaml --file data/your_input_file.txt --visualize
+```
+
+- For each input, a plot will be saved in the `visualizations/` folder showing which tokens most influenced the prediction.
+- For transformer models, LIME is used to highlight important words.
+- For LSTM models, a simple gradient-based token importance plot is generated.
+
+## Data Preparation
 
 Open and run the notebook:
 

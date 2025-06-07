@@ -29,3 +29,4 @@ seaborn>=0.12.2
 matplotlib>=3.7.1
 demoji>=1.1.0
 emoji>=1.7.0
+lime>=0.2.0.1

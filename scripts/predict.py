@@ -36,6 +36,7 @@ def main():
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
     parser.add_argument('--text', type=str, default=None, help='Raw text to predict')
     parser.add_argument('--file', type=str, default=None, help='Text file with one document per line')
+    parser.add_argument('--visualize', action='store_true', help='If set, generate and save prediction explanation plots')
     args = parser.parse_args()
 
     logger = setup_logging()
@@ -57,6 +58,13 @@ def main():
 
     # Label mapping (default)
     label_names = config['data'].get('label_names', ['negative', 'neutral', 'positive'])
+
+    # Import visualization utilities if needed
+    if args.visualize:
+        from visualization import explain_and_plot_transformer, explain_and_plot_lstm
+        import os
+        vis_dir = os.path.join(os.path.dirname(__file__), '..', 'visualizations')
+        os.makedirs(vis_dir, exist_ok=True)
 
     if model_type == 'lstm':
         logger.info('Using LSTM model pipeline for prediction')
@@ -84,6 +92,13 @@ def main():
         for i, text in enumerate(texts):
             print(f"Text: {text}")
             print(f"Predicted label: {label_names[preds[i]] if preds[i] < len(label_names) else preds[i]} (confidence: {confs[i]:.2f})\n")
+            if args.visualize:
+                save_path = os.path.join(vis_dir, f"lstm_explain_{i}.png")
+                try:
+                    explain_and_plot_lstm(model, vocab_builder, text, label_names, save_path)
+                    print(f"Visualization saved to {save_path}")
+                except Exception as e:
+                    print(f"Visualization failed: {e}")
     else:
         logger.info('Using transformer-based model pipeline for prediction')
         preprocessor = NewsPreprocessor(tokenizer_name=model_name, max_length=max_length)
@@ -103,6 +118,13 @@ def main():
         for i, text in enumerate(texts):
             print(f"Text: {text}")
             print(f"Predicted label: {label_names[preds[i]] if preds[i] < len(label_names) else preds[i]} (confidence: {confs[i]:.2f})\n")
+            if args.visualize:
+                save_path = os.path.join(vis_dir, f"transformer_explain_{i}.png")
+                try:
+                    explain_and_plot_transformer(model, tokenizer, text, label_names, save_path)
+                    print(f"Visualization saved to {save_path}")
+                except Exception as e:
+                    print(f"Visualization failed: {e}")
 
 if __name__ == "__main__":
     main()

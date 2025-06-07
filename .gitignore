@@ -182,6 +182,8 @@ outputs/
 outputs/*
 evaluations/
 evaluations/*
+visualizations/
+visualizations/*
 
 # Ignore prepared data
 # (raw, processed, external, interim, etc.)
