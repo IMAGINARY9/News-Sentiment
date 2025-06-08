@@ -121,7 +121,14 @@ def main():
             if args.visualize:
                 save_path = os.path.join(vis_dir, f"transformer_explain_{i}.png")
                 try:
-                    explain_and_plot_transformer(model, tokenizer, text, label_names, save_path)
+                    # Use the same tokenization as LIME for y-tick order
+                    tokens = text.split()
+                    explain_and_plot_transformer(
+                        model, tokenizer, text, label_names, save_path,
+                        tokens=tokens,
+                        pred_probs=probs[i].cpu().numpy(),
+                        pred_label=int(preds[i])
+                    )
                     print(f"Visualization saved to {save_path}")
                 except Exception as e:
                     print(f"Visualization failed: {e}")

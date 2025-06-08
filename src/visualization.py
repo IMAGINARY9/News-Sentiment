@@ -69,9 +69,10 @@ def _finalize_plot(fig, ax):
     ax.set_xlim(xlim[0] - 0.125 * x_range, xlim[1] + 0.125 * x_range)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
 
-def explain_and_plot_transformer(model, tokenizer, text, label_names, save_path):
+def explain_and_plot_transformer(model, tokenizer, text, label_names, save_path, tokens=None, pred_probs=None, pred_label=None):
     """
     Generate a LIME explanation plot for a transformer model prediction.
+    If pred_probs and pred_label are provided, use them for annotation; otherwise, recompute.
     """
     if LimeTextExplainer is None:
         raise ImportError("LIME is not installed. Please install lime to use visualization.")
@@ -93,19 +94,25 @@ def explain_and_plot_transformer(model, tokenizer, text, label_names, save_path)
             probs = torch.softmax(logits, dim=1).cpu().numpy()
         return probs
 
-    exp = explainer.explain_instance(text, predict_proba, num_features=20, labels=[0,1,2])
-    pred_probs = predict_proba([text])[0]
-    pred_label = int(pred_probs.argmax())
-    pred_prob = float(pred_probs[pred_label])
-    # Get word importances for the predicted label and sort DESC
-    word_scores = dict(exp.as_list(label=pred_label))
-    sorted_items = sorted(word_scores.items(), key=lambda x: abs(x[1]), reverse=True)
-    words = [w for w, _ in sorted_items]
+    exp = explainer.explain_instance(text, predict_proba, num_features=20, labels=list(range(len(label_names))))
+    # Use provided pred_probs/pred_label if available
+    if pred_probs is not None and pred_label is not None:
+        pred_probs_ = pred_probs
+        pred_label_ = pred_label
+        pred_prob = float(pred_probs_[pred_label_])
+    else:
+        pred_probs_ = predict_proba([text])[0]
+        pred_label_ = int(pred_probs_.argmax())
+        pred_prob = float(pred_probs_[pred_label_])
+    word_scores = dict(exp.as_list(label=pred_label_))
+    # Use provided tokens if available, else fallback to LIME order
+    if tokens is not None:
+        words = [w for w in tokens if w in word_scores]
+    else:
+        words = list(word_scores.keys())
+    words = words[::-1]  # reverse for top-to-bottom
     importances = [word_scores[w] for w in words]
     colors = _get_bar_colors(importances, pos_color, neg_color)
-    # Set font sizes
-    label_fontsize = 13
-    header_fontsize = label_fontsize + 2
     fig, ax = plt.subplots(figsize=(6, min(1.1 + 0.36*len(words), 11)))
     bar_height = 0.38
     bars = ax.barh(range(len(words)), importances, color=colors, edgecolor='none', zorder=3, height=bar_height)
@@ -113,10 +120,10 @@ def explain_and_plot_transformer(model, tokenizer, text, label_names, save_path)
     ax.set_yticks(range(len(words)))
     ax.set_yticklabels(words, fontsize=label_fontsize, fontweight='medium', color='#222')
     ax.set_xlabel('Token Importance', fontsize=label_fontsize, labelpad=6)
-    ax.set_title(f"LIME Explanation\nPredicted: {label_names[pred_label]} (p={pred_prob:.2f})", fontsize=header_fontsize, fontweight='bold', pad=8, color='#222')
+    ax.set_title(f"LIME Transformer Explanation\nPredicted: {label_names[pred_label_]} (p={pred_prob:.2f})", fontsize=header_fontsize, fontweight='bold', pad=8, color='#222')
     _draw_bar_labels(ax, bars, label_fontsize)
     _style_axes(ax, label_fontsize)
-    _add_prob_annotation(ax, label_names, pred_probs, label_fontsize, pred_label)
+    _add_prob_annotation(ax, label_names, pred_probs_, label_fontsize, pred_label_)
     _finalize_plot(fig, ax)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=160, bbox_inches='tight')
@@ -154,10 +161,9 @@ def explain_and_plot_lstm(model, vocab_builder, text, label_names, save_path):
     else:
         color_map = {n: pos_color for n in label_names}
     color = color_map.get(label_names[pred_label], pos_color)
-    token_grads = list(zip(tokens[:len(grads)], grads))
-    token_grads.sort(key=lambda x: abs(x[1]), reverse=True)
-    sorted_tokens = [t for t, _ in token_grads]
-    sorted_grads = [g for _, g in token_grads]
+    # Remove sorting, keep tokens in original order, but reverse for top-to-bottom
+    sorted_tokens = token_list[::-1]
+    sorted_grads = grads[::-1]
     fig, ax = plt.subplots(figsize=(6, min(1.1 + 0.36*len(sorted_tokens), 11)))
     bar_height = 0.38
     bars = ax.barh(range(len(sorted_tokens)), sorted_grads, tick_label=sorted_tokens, color=color, edgecolor='none', zorder=3, height=bar_height)
